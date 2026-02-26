@@ -3,6 +3,8 @@ import {
   Folder, 
   File, 
   FileVideo,
+  FileText,
+  FileImage,
   ChevronRight, 
   Home, 
   Upload, 
@@ -23,7 +25,8 @@ import {
   List as ListIcon,
   ArrowUpDown,
   Filter,
-  Move
+  Move,
+  Eye
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
@@ -64,6 +67,12 @@ export default function App() {
   const [loadingText, setLoadingText] = useState(false);
   const [folders, setFolders] = useState<string[]>([]);
   const [loadingFolders, setLoadingFolders] = useState(false);
+  
+  // Zoom State
+  const [zoomScale, setZoomScale] = useState(1);
+  const [zoomPos, setZoomPos] = useState({ x: 0, y: 0 });
+  const [isDragging, setIsDragging] = useState(false);
+  const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
   
   // View & Sort States
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
@@ -191,6 +200,40 @@ export default function App() {
   const isImage = (name: string) => /\.(jpg|jpeg|png|gif|webp|svg)$/i.test(name);
   const isVideo = (name: string) => /\.(mp4|webm|mov|ogg)$/i.test(name);
   const isTextFile = (name: string) => /\.(txt|md|json|js|ts|tsx|css|html|py|c|cpp|h|java|go|rs|php|sh|yml|yaml)$/i.test(name);
+  const isPdf = (name: string) => /\.pdf$/i.test(name);
+  const isOfficeFile = (name: string) => /\.(doc|docx|xls|xlsx|ppt|pptx)$/i.test(name);
+
+  // Reset zoom when item changes
+  useEffect(() => {
+    setZoomScale(1);
+    setZoomPos({ x: 0, y: 0 });
+  }, [selectedItem]);
+
+  const handleWheel = (e: React.WheelEvent) => {
+    if (!isImage(selectedItem?.name || '')) return;
+    e.preventDefault();
+    const delta = e.deltaY > 0 ? -0.1 : 0.1;
+    const newScale = Math.min(Math.max(zoomScale + delta, 0.5), 5);
+    setZoomScale(newScale);
+  };
+
+  const handleMouseDown = (e: React.MouseEvent) => {
+    if (zoomScale <= 1) return;
+    setIsDragging(true);
+    setDragStart({ x: e.clientX - zoomPos.x, y: e.clientY - zoomPos.y });
+  };
+
+  const handleMouseMove = (e: React.MouseEvent) => {
+    if (!isDragging) return;
+    setZoomPos({
+      x: e.clientX - dragStart.x,
+      y: e.clientY - dragStart.y
+    });
+  };
+
+  const handleMouseUp = () => {
+    setIsDragging(false);
+  };
 
   const handleCreateFolder = async () => {
     if (!newFolderName) return;
@@ -559,9 +602,19 @@ export default function App() {
                         <FileVideo size={40} className="text-zinc-700" />
                         <div className="absolute inset-0 bg-black/20 group-hover:bg-black/0 transition-colors" />
                       </div>
+                    ) : isPdf(item.name) ? (
+                      <div className="p-4 w-full h-full flex flex-col items-center justify-center gap-2">
+                        <FileText size={40} className="text-red-500/50" />
+                        <span className="text-[10px] font-bold text-zinc-600 uppercase tracking-widest">PDF</span>
+                      </div>
+                    ) : isOfficeFile(item.name) ? (
+                      <div className="p-4 w-full h-full flex flex-col items-center justify-center gap-2">
+                        <FileText size={40} className="text-blue-500/50" />
+                        <span className="text-[10px] font-bold text-zinc-600 uppercase tracking-widest">Office</span>
+                      </div>
                     ) : isTextFile(item.name) ? (
                       <div className="p-4 w-full h-full flex flex-col items-center justify-center gap-2">
-                        <File size={40} className="text-amber-500/50" />
+                        <FileText size={40} className="text-amber-500/50" />
                         <span className="text-[10px] font-bold text-zinc-600 uppercase tracking-widest">Texto</span>
                       </div>
                     ) : (
@@ -572,7 +625,7 @@ export default function App() {
                     {item.type === 'file' && (
                       <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
                         <div className="bg-indigo-600 p-2 rounded-full shadow-lg transform scale-90 group-hover:scale-100 transition-transform">
-                          <ExternalLink size={16} className="text-white" />
+                          <Eye size={16} className="text-white" />
                         </div>
                       </div>
                     )}
@@ -654,6 +707,12 @@ export default function App() {
                         <div className="w-8 h-8 rounded-lg overflow-hidden shrink-0 bg-zinc-950 border border-zinc-800">
                           <img src={item.download_url || ''} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
                         </div>
+                      ) : isPdf(item.name) ? (
+                        <FileText className="text-red-400 shrink-0" size={20} />
+                      ) : isOfficeFile(item.name) ? (
+                        <FileText className="text-blue-400 shrink-0" size={20} />
+                      ) : isVideo(item.name) ? (
+                        <FileVideo className="text-zinc-400 shrink-0" size={20} />
                       ) : (
                         <File className="text-zinc-500 shrink-0" size={20} />
                       )}
@@ -728,7 +787,7 @@ export default function App() {
               initial={{ opacity: 0, scale: 0.9, y: 20 }} 
               animate={{ opacity: 1, scale: 1, y: 0 }} 
               exit={{ opacity: 0, scale: 0.9, y: 20 }}
-              className="relative bg-zinc-900 w-full max-w-5xl max-h-[90vh] rounded-3xl border border-zinc-800 shadow-2xl overflow-hidden flex flex-col"
+              className="relative bg-zinc-900 w-full max-w-6xl h-[85vh] max-h-[90vh] rounded-3xl border border-zinc-800 shadow-2xl overflow-hidden flex flex-col"
             >
               {/* Modal Header */}
               <div className="p-4 border-b border-zinc-800 flex items-center justify-between bg-zinc-900/50 backdrop-blur-md sticky top-0 z-10">
@@ -770,20 +829,61 @@ export default function App() {
               </div>
 
               {/* Modal Content */}
-              <div className="flex-1 overflow-auto p-6 flex items-center justify-center bg-zinc-950/30">
+              <div 
+                className="flex-1 overflow-hidden p-6 flex items-center justify-center bg-zinc-950/30 relative"
+                onWheel={handleWheel}
+                onMouseDown={handleMouseDown}
+                onMouseMove={handleMouseMove}
+                onMouseUp={handleMouseUp}
+                onMouseLeave={handleMouseUp}
+              >
                 {isImage(selectedItem.name) ? (
-                  <img 
-                    src={selectedItem.download_url || ''} 
-                    alt={selectedItem.name}
-                    className="max-w-full max-h-full object-contain rounded-lg shadow-2xl"
-                    referrerPolicy="no-referrer"
-                  />
+                  <div className="relative w-full h-full flex items-center justify-center overflow-hidden">
+                    <motion.img 
+                      src={selectedItem.download_url || ''} 
+                      alt={selectedItem.name}
+                      animate={{ 
+                        scale: zoomScale,
+                        x: zoomPos.x,
+                        y: zoomPos.y
+                      }}
+                      transition={{ type: 'spring', stiffness: 300, damping: 30 }}
+                      className={`max-w-full max-h-full object-contain rounded-lg shadow-2xl ${zoomScale > 1 ? 'cursor-grab active:cursor-grabbing' : 'cursor-default'}`}
+                      referrerPolicy="no-referrer"
+                      draggable={false}
+                    />
+                    {zoomScale !== 1 && (
+                      <div className="absolute bottom-4 right-4 flex items-center gap-2">
+                        <button 
+                          onClick={() => { setZoomScale(1); setZoomPos({ x: 0, y: 0 }); }}
+                          className="bg-black/60 backdrop-blur-md px-3 py-1.5 rounded-full text-[10px] font-bold text-white border border-white/10 hover:bg-zinc-800 transition-colors"
+                        >
+                          Resetar Zoom
+                        </button>
+                        <div className="bg-black/60 backdrop-blur-md px-3 py-1.5 rounded-full text-[10px] font-bold text-white border border-white/10">
+                          Zoom: {Math.round(zoomScale * 100)}%
+                        </div>
+                      </div>
+                    )}
+                  </div>
                 ) : isVideo(selectedItem.name) ? (
                   <video 
                     src={selectedItem.download_url || ''} 
                     controls 
                     autoPlay
                     className="max-w-full max-h-full rounded-lg shadow-2xl"
+                  />
+                ) : isPdf(selectedItem.name) ? (
+                  <iframe 
+                    src={`https://docs.google.com/gview?url=${encodeURIComponent(selectedItem.download_url || '')}&embedded=true`} 
+                    className="w-full h-full rounded-lg bg-white border-none"
+                    title={selectedItem.name}
+                  />
+                ) : isOfficeFile(selectedItem.name) ? (
+                  <iframe 
+                    src={`https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(selectedItem.download_url || '')}`} 
+                    className="w-full h-full rounded-lg bg-white border-none"
+                    title={selectedItem.name}
                   />
                 ) : isTextFile(selectedItem.name) ? (
                   <div className="w-full h-full max-w-4xl bg-zinc-900 rounded-2xl border border-zinc-800 overflow-hidden flex flex-col">
