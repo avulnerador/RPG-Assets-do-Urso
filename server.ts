@@ -41,9 +41,9 @@ async function startServer() {
     'User-Agent': 'RPG-Asset-Manager'
   };
 
-  // Proxy /functions to support Cloudflare Pages structure in preview
-  app.all("/functions", async (req, res) => {
-    const { onRequest } = await import('./functions/[[path]].js');
+  // Proxy /api to support Cloudflare Pages structure in preview
+  app.all("/api", async (req, res) => {
+    const { onRequest } = await import('./functions/api.js');
     
     // Mock Cloudflare context
     const context = {

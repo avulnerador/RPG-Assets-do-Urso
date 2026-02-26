@@ -93,7 +93,7 @@ export default function App() {
 
   const fetchConfig = async () => {
     try {
-      const res = await fetch('/functions?action=config');
+      const res = await fetch('/api?action=config');
       const data = await res.json();
       setConfig(data);
     } catch (err) {
@@ -104,7 +104,7 @@ export default function App() {
   const fetchFolders = async () => {
     setLoadingFolders(true);
     try {
-      const res = await fetch('/functions?action=folders');
+      const res = await fetch('/api?action=folders');
       const data = await res.json();
       setFolders(data);
     } catch (err) {
@@ -118,7 +118,7 @@ export default function App() {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch(`/functions?action=contents&path=${encodeURIComponent(path)}`);
+      const res = await fetch(`/api?action=contents&path=${encodeURIComponent(path)}`);
       if (!res.ok) {
         const data = await res.json();
         throw new Error(data.error || 'Erro ao carregar conteúdo');
@@ -160,7 +160,7 @@ export default function App() {
     setIsSubmitting(true);
     try {
       const path = currentPath ? `${currentPath}/${newFolderName}` : newFolderName;
-      const res = await fetch('/functions?action=folder', {
+      const res = await fetch('/api?action=folder', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ path })
@@ -191,7 +191,7 @@ export default function App() {
         const base64Content = (reader.result as string).split(',')[1];
         const path = targetUploadPath ? `${targetUploadPath}/${sanitizedName}` : sanitizedName;
         
-        const res = await fetch('/functions?action=upload', {
+        const res = await fetch('/api?action=upload', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -227,7 +227,7 @@ export default function App() {
       const parentPath = currentPath;
       const newPath = parentPath ? `${parentPath}/${renameValue}` : renameValue;
 
-      const res = await fetch('/functions?action=move', {
+      const res = await fetch('/api?action=move', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ oldPath, newPath, sha: showRenameModal.sha })
@@ -248,7 +248,7 @@ export default function App() {
   const handleDelete = async (item: GitHubItem) => {
     if (!confirm(`Tem certeza que deseja excluir "${item.name}"?`)) return;
     try {
-      const res = await fetch('/functions?action=delete', {
+      const res = await fetch('/api?action=delete', {
         method: 'DELETE',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ path: item.path, sha: item.sha })
