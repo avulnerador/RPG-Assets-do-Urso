@@ -162,18 +162,40 @@ export async function onRequest(context) {
       }
 
       case 'delete': {
-        const { path, sha } = await request.json();
-        const ghUrl = `https://api.github.com/repos/${GITHUB_REPO}/contents/${path}`;
+        const { path, sha, type } = await request.json();
+        
+        let targetPath = path;
+        let targetSha = sha;
+
+        // If it's a directory, we try to delete the .gitkeep file inside it
+        if (type === 'dir') {
+          const gitkeepPath = `${path}/.gitkeep`.replace(/\/+/g, '/').replace(/^\//, '');
+          const checkRes = await fetch(`https://api.github.com/repos/${GITHUB_REPO}/contents/${gitkeepPath}?ref=${GITHUB_BRANCH}`, { headers: githubHeaders });
+          
+          if (!checkRes.ok) {
+            return jsonResponse({ error: "Para excluir uma pasta, ela deve estar vazia ou conter apenas o arquivo .gitkeep. Exclua os arquivos internos primeiro." }, 400);
+          }
+          
+          const gitkeepData = await checkRes.json();
+          targetPath = gitkeepPath;
+          targetSha = gitkeepData.sha;
+        }
+
+        const ghUrl = `https://api.github.com/repos/${GITHUB_REPO}/contents/${targetPath}`;
         const response = await fetch(ghUrl, {
           method: 'DELETE',
           headers: githubHeaders,
           body: JSON.stringify({
-            message: `Delete ${path}`,
-            sha,
+            message: `Delete ${targetPath}`,
+            sha: targetSha,
             branch: GITHUB_BRANCH
           })
         });
-        if (!response.ok) return jsonResponse({ error: "Erro ao excluir" }, 500);
+
+        if (!response.ok) {
+          const err = await response.json();
+          return jsonResponse({ error: err.message || "Erro ao excluir" }, response.status);
+        }
         return jsonResponse({ success: true });
       }
 

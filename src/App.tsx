@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { 
   Folder, 
   File, 
@@ -18,7 +18,12 @@ import {
   X,
   AlertCircle,
   CheckCircle2,
-  Loader2
+  Loader2,
+  LayoutGrid,
+  List as ListIcon,
+  ArrowUpDown,
+  Filter,
+  Move
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
@@ -52,11 +57,18 @@ export default function App() {
   const [showUploadModal, setShowUploadModal] = useState(false);
   const [showNewFolderModal, setShowNewFolderModal] = useState(false);
   const [showRenameModal, setShowRenameModal] = useState<GitHubItem | null>(null);
+  const [showMoveModal, setShowMoveModal] = useState<GitHubItem | null>(null);
   const [selectedItem, setSelectedItem] = useState<GitHubItem | null>(null);
+  const [itemToDelete, setItemToDelete] = useState<GitHubItem | null>(null);
   const [textContent, setTextContent] = useState<string | null>(null);
   const [loadingText, setLoadingText] = useState(false);
   const [folders, setFolders] = useState<string[]>([]);
   const [loadingFolders, setLoadingFolders] = useState(false);
+  
+  // View & Sort States
+  const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
+  const [sortBy, setSortBy] = useState<'name' | 'size' | 'type'>('name');
+  const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc');
   
   // Form States
   const [uploadFile, setUploadFile] = useState<File | null>(null);
@@ -64,6 +76,7 @@ export default function App() {
   const [targetUploadPath, setTargetUploadPath] = useState('');
   const [newFolderName, setNewFolderName] = useState('');
   const [renameValue, setRenameValue] = useState('');
+  const [targetMovePath, setTargetMovePath] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -82,6 +95,13 @@ export default function App() {
       fetchFolders();
     }
   }, [showUploadModal]);
+
+  useEffect(() => {
+    if (showMoveModal) {
+      setTargetMovePath(currentPath);
+      fetchFolders();
+    }
+  }, [showMoveModal]);
 
   useEffect(() => {
     if (selectedItem && isTextFile(selectedItem.name) && selectedItem.download_url) {
@@ -104,7 +124,7 @@ export default function App() {
   const fetchFolders = async () => {
     setLoadingFolders(true);
     try {
-      const res = await fetch('/api?action=folders');
+      const res = await fetch(`/api?action=folders&t=${Date.now()}`);
       const data = await res.json();
       setFolders(data);
     } catch (err) {
@@ -118,24 +138,41 @@ export default function App() {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch(`/api?action=contents&path=${encodeURIComponent(path)}`);
+      const res = await fetch(`/api?action=contents&path=${encodeURIComponent(path)}&t=${Date.now()}`);
       if (!res.ok) {
         const data = await res.json();
         throw new Error(data.error || 'Erro ao carregar conteúdo');
       }
       const data = await res.json();
-      // Sort: directories first, then files
-      const sorted = data.sort((a: GitHubItem, b: GitHubItem) => {
-        if (a.type === b.type) return a.name.localeCompare(b.name);
-        return a.type === 'dir' ? -1 : 1;
-      });
-      setItems(sorted);
+      setItems(data);
     } catch (err: any) {
       setError(err.message);
     } finally {
       setLoading(false);
     }
   };
+
+  const sortedItems = useMemo(() => {
+    return [...items].sort((a, b) => {
+      // Always keep directories first
+      if (a.type !== b.type) {
+        return a.type === 'dir' ? -1 : 1;
+      }
+
+      let comparison = 0;
+      if (sortBy === 'name') {
+        comparison = a.name.localeCompare(b.name);
+      } else if (sortBy === 'size') {
+        comparison = (a.size || 0) - (b.size || 0);
+      } else if (sortBy === 'type') {
+        const extA = a.name.split('.').pop() || '';
+        const extB = b.name.split('.').pop() || '';
+        comparison = extA.localeCompare(extB);
+      }
+
+      return sortOrder === 'asc' ? comparison : -comparison;
+    });
+  }, [items, sortBy, sortOrder]);
 
   const fetchTextContent = async (url: string) => {
     setLoadingText(true);
@@ -169,7 +206,7 @@ export default function App() {
       setSuccess('Pasta criada com sucesso!');
       setShowNewFolderModal(false);
       setNewFolderName('');
-      fetchContents(currentPath);
+      await fetchContents(currentPath);
     } catch (err: any) {
       setError(err.message);
     } finally {
@@ -180,38 +217,44 @@ export default function App() {
   const handleUpload = async () => {
     if (!uploadFile || !uploadName) return;
     
+    // Get original extension
+    const lastDotIndex = uploadFile.name.lastIndexOf('.');
+    const extension = lastDotIndex !== -1 ? uploadFile.name.substring(lastDotIndex) : '';
+    
     // Sanitize filename: allow alphanumeric, dots, dashes and underscores
-    const sanitizedName = uploadName.replace(/[^a-zA-Z0-9._-]/g, '_');
+    const sanitizedName = uploadName.replace(/[^a-zA-Z0-9._-]/g, '_') + extension;
     
     setIsSubmitting(true);
     try {
-      const reader = new FileReader();
-      reader.readAsDataURL(uploadFile);
-      reader.onload = async () => {
-        const base64Content = (reader.result as string).split(',')[1];
-        const path = targetUploadPath ? `${targetUploadPath}/${sanitizedName}` : sanitizedName;
-        
-        const res = await fetch('/api?action=upload', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            path,
-            content: base64Content,
-            message: `Upload de asset: ${sanitizedName}`
-          })
-        });
+      const base64Content = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve((reader.result as string).split(',')[1]);
+        reader.onerror = reject;
+        reader.readAsDataURL(uploadFile);
+      });
 
-        if (!res.ok) {
-          const data = await res.json();
-          throw new Error(data.error || 'Falha no upload');
-        }
+      const path = targetUploadPath ? `${targetUploadPath}/${sanitizedName}` : sanitizedName;
+      
+      const res = await fetch('/api?action=upload', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          path,
+          content: base64Content,
+          message: `Upload de asset: ${sanitizedName}`
+        })
+      });
 
-        setSuccess('Asset enviado com sucesso!');
-        setShowUploadModal(false);
-        setUploadFile(null);
-        setUploadName('');
-        fetchContents(currentPath);
-      };
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.error || 'Falha no upload');
+      }
+
+      setSuccess('Asset enviado com sucesso!');
+      setShowUploadModal(false);
+      setUploadFile(null);
+      setUploadName('');
+      await fetchContents(currentPath);
     } catch (err: any) {
       setError(err.message);
     } finally {
@@ -225,7 +268,15 @@ export default function App() {
     try {
       const oldPath = showRenameModal.path;
       const parentPath = currentPath;
-      const newPath = parentPath ? `${parentPath}/${renameValue}` : renameValue;
+      
+      // Get original extension if it's a file
+      const lastDotIndex = showRenameModal.name.lastIndexOf('.');
+      const extension = (showRenameModal.type === 'file' && lastDotIndex !== -1) 
+        ? showRenameModal.name.substring(lastDotIndex) 
+        : '';
+      
+      const newName = renameValue + extension;
+      const newPath = parentPath ? `${parentPath}/${newName}` : newName;
 
       const res = await fetch('/api?action=move', {
         method: 'POST',
@@ -237,7 +288,7 @@ export default function App() {
       setSuccess('Item renomeado com sucesso!');
       setShowRenameModal(null);
       setRenameValue('');
-      fetchContents(currentPath);
+      await fetchContents(currentPath);
     } catch (err: any) {
       setError(err.message);
     } finally {
@@ -245,19 +296,66 @@ export default function App() {
     }
   };
 
-  const handleDelete = async (item: GitHubItem) => {
-    if (!confirm(`Tem certeza que deseja excluir "${item.name}"?`)) return;
+  const handleMove = async () => {
+    if (!showMoveModal) return;
+    setIsSubmitting(true);
+    try {
+      const oldPath = showMoveModal.path;
+      const newPath = targetMovePath ? `${targetMovePath}/${showMoveModal.name}` : showMoveModal.name;
+
+      if (oldPath === newPath) {
+        throw new Error('O destino é o mesmo que a origem');
+      }
+
+      const res = await fetch('/api?action=move', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ oldPath, newPath, sha: showMoveModal.sha })
+      });
+
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.error || 'Falha ao mover');
+      }
+
+      setSuccess('Item movido com sucesso!');
+      setShowMoveModal(null);
+      await fetchContents(currentPath);
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleDelete = (item: GitHubItem) => {
+    setItemToDelete(item);
+  };
+
+  const confirmDelete = async () => {
+    if (!itemToDelete) return;
+    setIsSubmitting(true);
     try {
       const res = await fetch('/api?action=delete', {
         method: 'DELETE',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ path: item.path, sha: item.sha })
+        body: JSON.stringify({ 
+          path: itemToDelete.path, 
+          sha: itemToDelete.sha,
+          type: itemToDelete.type
+        })
       });
-      if (!res.ok) throw new Error('Falha ao excluir');
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.error || 'Falha ao excluir');
+      }
       setSuccess('Item excluído com sucesso!');
-      fetchContents(currentPath);
+      setItemToDelete(null);
+      await fetchContents(currentPath);
     } catch (err: any) {
       setError(err.message);
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -347,6 +445,49 @@ export default function App() {
           ))}
         </nav>
 
+        {/* Toolbar: Sorting & View Mode */}
+        <div className="flex flex-col sm:flex-row items-center justify-between gap-4 mb-6">
+          <div className="flex items-center gap-2 bg-zinc-900/30 p-1.5 rounded-xl border border-zinc-800/50 w-full sm:w-auto">
+            <button 
+              onClick={() => setViewMode('grid')}
+              className={`flex-1 sm:flex-none flex items-center justify-center gap-2 px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${viewMode === 'grid' ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-500/20' : 'text-zinc-500 hover:text-zinc-300'}`}
+            >
+              <LayoutGrid size={14} />
+              <span>Grade</span>
+            </button>
+            <button 
+              onClick={() => setViewMode('list')}
+              className={`flex-1 sm:flex-none flex items-center justify-center gap-2 px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${viewMode === 'list' ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-500/20' : 'text-zinc-500 hover:text-zinc-300'}`}
+            >
+              <ListIcon size={14} />
+              <span>Lista</span>
+            </button>
+          </div>
+
+          <div className="flex items-center gap-3 w-full sm:w-auto">
+            <div className="flex items-center gap-2 bg-zinc-900/30 px-3 py-2 rounded-xl border border-zinc-800/50 flex-1 sm:flex-none">
+              <Filter size={14} className="text-zinc-500" />
+              <select 
+                value={sortBy}
+                onChange={(e) => setSortBy(e.target.value as any)}
+                className="bg-transparent text-xs font-bold text-zinc-300 focus:outline-none cursor-pointer appearance-none pr-4"
+              >
+                <option value="name" className="bg-zinc-900">Nome</option>
+                <option value="size" className="bg-zinc-900">Tamanho</option>
+                <option value="type" className="bg-zinc-900">Tipo</option>
+              </select>
+            </div>
+
+            <button 
+              onClick={() => setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc')}
+              className="p-2 bg-zinc-900/30 hover:bg-zinc-800/50 rounded-xl border border-zinc-800/50 text-zinc-400 hover:text-indigo-400 transition-all"
+              title={sortOrder === 'asc' ? 'Crescente' : 'Decrescente'}
+            >
+              <ArrowUpDown size={18} className={sortOrder === 'desc' ? 'rotate-180' : ''} />
+            </button>
+          </div>
+        </div>
+
         {/* Status Messages */}
         <AnimatePresence>
           {error && (
@@ -380,7 +521,7 @@ export default function App() {
               <Loader2 className="animate-spin text-indigo-500" size={48} />
               <p className="text-sm text-zinc-500 font-medium animate-pulse">Sincronizando com GitHub...</p>
             </div>
-          ) : items.length === 0 ? (
+          ) : sortedItems.length === 0 ? (
             <div className="py-32 flex flex-col items-center justify-center gap-4 bg-zinc-900/20 rounded-3xl border border-dashed border-zinc-800">
               <Folder size={64} className="text-zinc-800" />
               <div className="text-center">
@@ -388,9 +529,9 @@ export default function App() {
                 <p className="text-sm text-zinc-700">Comece criando uma pasta ou fazendo upload de assets.</p>
               </div>
             </div>
-          ) : (
+          ) : viewMode === 'grid' ? (
             <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-6">
-              {items.map((item) => (
+              {sortedItems.map((item) => (
                 <motion.div
                   layout
                   key={item.sha}
@@ -459,12 +600,25 @@ export default function App() {
                         <button 
                           onClick={(e) => {
                             e.stopPropagation();
-                            setRenameValue(item.name);
+                            const lastDotIndex = item.name.lastIndexOf('.');
+                            if (item.type === 'file' && lastDotIndex !== -1) {
+                              setRenameValue(item.name.substring(0, lastDotIndex));
+                            } else {
+                              setRenameValue(item.name);
+                            }
                             setShowRenameModal(item);
                           }}
                           className="p-1.5 text-zinc-500 hover:text-amber-400 rounded-lg hover:bg-amber-400/10 transition-colors"
+                          title="Renomear"
                         >
                           <Edit3 size={12} />
+                        </button>
+                        <button 
+                          onClick={(e) => { e.stopPropagation(); setShowMoveModal(item); }}
+                          className="p-1.5 text-zinc-500 hover:text-indigo-400 rounded-lg hover:bg-indigo-400/10 transition-colors"
+                          title="Mover"
+                        >
+                          <Move size={12} />
                         </button>
                         <button 
                           onClick={(e) => { e.stopPropagation(); handleDelete(item); }}
@@ -477,6 +631,85 @@ export default function App() {
                   </div>
                 </motion.div>
               ))}
+            </div>
+          ) : (
+            <div className="bg-zinc-900/30 rounded-3xl border border-zinc-800/50 overflow-hidden backdrop-blur-sm">
+              <div className="grid grid-cols-12 gap-4 px-6 py-4 border-b border-zinc-800/50 text-[10px] font-bold uppercase tracking-widest text-zinc-500">
+                <div className="col-span-6 md:col-span-7">Nome</div>
+                <div className="col-span-3 md:col-span-2 text-right">Tamanho</div>
+                <div className="col-span-3 text-right">Ações</div>
+              </div>
+
+              <div className="divide-y divide-zinc-800/30">
+                {sortedItems.map((item) => (
+                  <div 
+                    key={item.sha} 
+                    className="grid grid-cols-12 gap-4 px-6 py-4 items-center hover:bg-white/[0.02] transition-colors group cursor-pointer"
+                    onClick={() => item.type === 'dir' ? setCurrentPath(item.path) : setSelectedItem(item)}
+                  >
+                    <div className="col-span-6 md:col-span-7 flex items-center gap-3 overflow-hidden">
+                      {item.type === 'dir' ? (
+                        <Folder className="text-indigo-400 shrink-0" size={20} />
+                      ) : isImage(item.name) ? (
+                        <div className="w-8 h-8 rounded-lg overflow-hidden shrink-0 bg-zinc-950 border border-zinc-800">
+                          <img src={item.download_url || ''} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                        </div>
+                      ) : (
+                        <File className="text-zinc-500 shrink-0" size={20} />
+                      )}
+                      <span className={`text-sm font-medium truncate ${item.type === 'dir' ? 'text-indigo-300' : 'text-zinc-300'}`}>
+                        {item.name}
+                      </span>
+                    </div>
+                    
+                    <div className="col-span-3 md:col-span-2 text-right text-xs font-mono text-zinc-500">
+                      {item.type === 'file' ? `${(item.size / 1024).toFixed(1)} KB` : '--'}
+                    </div>
+
+                    <div className="col-span-3 flex items-center justify-end gap-1">
+                      {item.type === 'file' && (
+                        <button 
+                          onClick={(e) => { e.stopPropagation(); copyToNotion(item); }}
+                          className="p-2 text-zinc-500 hover:text-indigo-400 hover:bg-indigo-400/10 rounded-lg transition-all"
+                          title="Copiar para Notion"
+                        >
+                          <Copy size={16} />
+                        </button>
+                      )}
+                      <button 
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          const lastDotIndex = item.name.lastIndexOf('.');
+                          if (item.type === 'file' && lastDotIndex !== -1) {
+                            setRenameValue(item.name.substring(0, lastDotIndex));
+                          } else {
+                            setRenameValue(item.name);
+                          }
+                          setShowRenameModal(item);
+                        }}
+                        className="p-2 text-zinc-500 hover:text-amber-400 hover:bg-amber-400/10 rounded-lg transition-all"
+                        title="Renomear"
+                      >
+                        <Edit3 size={16} />
+                      </button>
+                      <button 
+                        onClick={(e) => { e.stopPropagation(); setShowMoveModal(item); }}
+                        className="p-2 text-zinc-500 hover:text-indigo-400 hover:bg-indigo-400/10 rounded-lg transition-all"
+                        title="Mover"
+                      >
+                        <Move size={16} />
+                      </button>
+                      <button 
+                        onClick={(e) => { e.stopPropagation(); handleDelete(item); }}
+                        className="p-2 text-zinc-500 hover:text-red-400 hover:bg-red-400/10 rounded-lg transition-all"
+                        title="Excluir"
+                      >
+                        <Trash2 size={16} />
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
             </div>
           )}
         </div>
@@ -576,13 +809,14 @@ export default function App() {
           </div>
         )}
 
-        {(showUploadModal || showNewFolderModal || showRenameModal) && (
+        {(showUploadModal || showNewFolderModal || showRenameModal || showMoveModal) && (
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
             <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
               onClick={() => {
                 setShowUploadModal(false);
                 setShowNewFolderModal(false);
                 setShowRenameModal(null);
+                setShowMoveModal(null);
               }}
               className="absolute inset-0 bg-black/80 backdrop-blur-md"
             />
@@ -594,9 +828,41 @@ export default function App() {
                 {showUploadModal && <><Upload className="text-indigo-500" /> Novo Asset</>}
                 {showNewFolderModal && <><FolderPlus className="text-indigo-500" /> Nova Pasta</>}
                 {showRenameModal && <><Edit3 className="text-amber-500" /> Renomear Item</>}
+                {showMoveModal && <><Move className="text-indigo-500" /> Mover Item</>}
               </h2>
 
               <div className="space-y-6">
+                {showMoveModal && (
+                  <div className="space-y-4">
+                    <div className="p-4 bg-zinc-950/50 rounded-2xl border border-zinc-800">
+                      <p className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest mb-2">Item Selecionado</p>
+                      <div className="flex items-center gap-3">
+                        {showMoveModal.type === 'dir' ? <Folder className="text-indigo-400" size={20} /> : <File className="text-zinc-400" size={20} />}
+                        <span className="text-sm font-medium truncate">{showMoveModal.name}</span>
+                      </div>
+                    </div>
+
+                    <div className="space-y-2">
+                      <label className="text-xs font-bold text-zinc-500 uppercase tracking-widest">Pasta de Destino</label>
+                      <div className="relative bg-zinc-800 border border-zinc-700 rounded-xl px-4 py-3">
+                        <select 
+                          value={targetMovePath}
+                          onChange={(e) => setTargetMovePath(e.target.value)}
+                          className="w-full bg-transparent text-sm font-medium text-zinc-300 focus:outline-none appearance-none cursor-pointer pr-8"
+                        >
+                          {folders.map(f => (
+                            <option key={f} value={f} className="bg-zinc-900 text-zinc-300">
+                              {f === '' ? 'root (/) ' : `root / ${f}`}
+                            </option>
+                          ))}
+                        </select>
+                        <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none text-zinc-500">
+                          {loadingFolders ? <Loader2 size={14} className="animate-spin" /> : <ChevronRight size={14} className="rotate-90" />}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
                 {showUploadModal && (
                   <>
                     <div className="p-3 bg-indigo-500/5 border border-indigo-500/10 rounded-2xl mb-4">
@@ -634,7 +900,13 @@ export default function App() {
                               const file = e.target.files?.[0];
                               if (file) {
                                 setUploadFile(file);
-                                setUploadName(file.name);
+                                // Set upload name without extension
+                                const lastDotIndex = file.name.lastIndexOf('.');
+                                if (lastDotIndex !== -1) {
+                                  setUploadName(file.name.substring(0, lastDotIndex));
+                                } else {
+                                  setUploadName(file.name);
+                                }
                               }
                             }}
                           />
@@ -662,13 +934,20 @@ export default function App() {
 
                       <div className="space-y-2">
                         <label className="text-xs font-bold text-zinc-500 uppercase tracking-widest">Nome do Asset</label>
-                        <input 
-                          type="text" 
-                          value={uploadName}
-                          onChange={(e) => setUploadName(e.target.value)}
-                          className="w-full bg-zinc-800 border border-zinc-700 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/50 transition-all"
-                          placeholder="nome-do-arquivo.ext"
-                        />
+                        <div className="flex items-center gap-2">
+                          <input 
+                            type="text" 
+                            value={uploadName}
+                            onChange={(e) => setUploadName(e.target.value)}
+                            className="flex-1 bg-zinc-800 border border-zinc-700 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/50 transition-all"
+                            placeholder="nome-do-arquivo"
+                          />
+                          {uploadFile && uploadFile.name.includes('.') && (
+                            <div className="px-3 py-3 bg-zinc-900 border border-zinc-800 rounded-xl text-xs font-mono text-zinc-500">
+                              {uploadFile.name.substring(uploadFile.name.lastIndexOf('.'))}
+                            </div>
+                          )}
+                        </div>
                       </div>
                     </div>
                   </>
@@ -691,37 +970,88 @@ export default function App() {
                 {showRenameModal && (
                   <div className="space-y-2">
                     <label className="text-xs font-bold text-zinc-500 uppercase tracking-widest">Novo Nome</label>
-                    <input 
-                      type="text" 
-                      autoFocus
-                      value={renameValue}
-                      onChange={(e) => setRenameValue(e.target.value)}
-                      className="w-full bg-zinc-800 border border-zinc-700 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/50 transition-all"
-                    />
+                    <div className="flex items-center gap-2">
+                      <input 
+                        type="text" 
+                        autoFocus
+                        value={renameValue}
+                        onChange={(e) => setRenameValue(e.target.value)}
+                        className="flex-1 bg-zinc-800 border border-zinc-700 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/50 transition-all"
+                      />
+                      {showRenameModal.type === 'file' && showRenameModal.name.includes('.') && (
+                        <div className="px-3 py-3 bg-zinc-900 border border-zinc-800 rounded-xl text-xs font-mono text-zinc-500">
+                          {showRenameModal.name.substring(showRenameModal.name.lastIndexOf('.'))}
+                        </div>
+                      )}
+                    </div>
                   </div>
                 )}
 
                 <div className="flex gap-3 pt-4">
+                    <button 
+                      onClick={() => {
+                        setShowUploadModal(false);
+                        setShowNewFolderModal(false);
+                        setShowRenameModal(null);
+                        setShowMoveModal(null);
+                      }}
+                      className="flex-1 px-4 py-3 bg-zinc-800 hover:bg-zinc-700 rounded-xl font-bold text-sm transition-all"
+                    >
+                      Cancelar
+                    </button>
+                    <button 
+                      disabled={isSubmitting}
+                      onClick={() => {
+                        if (showUploadModal) handleUpload();
+                        if (showNewFolderModal) handleCreateFolder();
+                        if (showRenameModal) handleRename();
+                        if (showMoveModal) handleMove();
+                      }}
+                      className="flex-1 px-4 py-3 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed rounded-xl font-bold text-sm transition-all shadow-lg shadow-indigo-500/20 flex items-center justify-center gap-2"
+                    >
+                      {isSubmitting ? <Loader2 className="animate-spin" size={18} /> : 'Confirmar'}
+                    </button>
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Delete Confirmation Modal */}
+      <AnimatePresence>
+        {itemToDelete && (
+          <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.9, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.9, y: 20 }}
+              className="w-full max-w-md bg-zinc-900 border border-zinc-800 rounded-3xl overflow-hidden shadow-2xl"
+            >
+              <div className="p-6">
+                <div className="w-12 h-12 bg-red-500/10 rounded-2xl flex items-center justify-center mb-4">
+                  <Trash2 className="text-red-500" size={24} />
+                </div>
+                <h3 className="text-xl font-bold text-white mb-2">Excluir {itemToDelete.type === 'dir' ? 'Pasta' : 'Arquivo'}</h3>
+                <p className="text-zinc-400 text-sm mb-6 leading-relaxed">
+                  Tem certeza que deseja excluir <span className="text-white font-medium">"{itemToDelete.name}"</span>? 
+                  {itemToDelete.type === 'dir' && " Esta ação removerá a pasta (se estiver vazia ou contiver apenas o .gitkeep)."}
+                  Esta ação não pode ser desfeita.
+                </p>
+
+                <div className="flex gap-3">
                   <button 
-                    onClick={() => {
-                      setShowUploadModal(false);
-                      setShowNewFolderModal(false);
-                      setShowRenameModal(null);
-                    }}
-                    className="flex-1 px-4 py-3 bg-zinc-800 hover:bg-zinc-700 rounded-xl font-bold text-sm transition-all"
+                    onClick={() => setItemToDelete(null)}
+                    className="flex-1 py-3 px-4 rounded-2xl bg-zinc-800 hover:bg-zinc-700 text-white font-medium transition-colors"
                   >
                     Cancelar
                   </button>
                   <button 
+                    onClick={confirmDelete}
                     disabled={isSubmitting}
-                    onClick={() => {
-                      if (showUploadModal) handleUpload();
-                      if (showNewFolderModal) handleCreateFolder();
-                      if (showRenameModal) handleRename();
-                    }}
-                    className="flex-1 px-4 py-3 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed rounded-xl font-bold text-sm transition-all shadow-lg shadow-indigo-500/20 flex items-center justify-center gap-2"
+                    className="flex-1 py-3 px-4 rounded-2xl bg-red-600 hover:bg-red-500 text-white font-medium transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
                   >
-                    {isSubmitting ? <Loader2 className="animate-spin" size={18} /> : 'Confirmar'}
+                    {isSubmitting ? <Loader2 size={18} className="animate-spin" /> : "Excluir"}
                   </button>
                 </div>
               </div>
