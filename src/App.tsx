@@ -55,10 +55,13 @@ export default function App() {
   const [selectedItem, setSelectedItem] = useState<GitHubItem | null>(null);
   const [textContent, setTextContent] = useState<string | null>(null);
   const [loadingText, setLoadingText] = useState(false);
+  const [folders, setFolders] = useState<string[]>([]);
+  const [loadingFolders, setLoadingFolders] = useState(false);
   
   // Form States
   const [uploadFile, setUploadFile] = useState<File | null>(null);
   const [uploadName, setUploadName] = useState('');
+  const [targetUploadPath, setTargetUploadPath] = useState('');
   const [newFolderName, setNewFolderName] = useState('');
   const [renameValue, setRenameValue] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -72,6 +75,13 @@ export default function App() {
   useEffect(() => {
     fetchContents(currentPath);
   }, [currentPath]);
+
+  useEffect(() => {
+    if (showUploadModal) {
+      setTargetUploadPath(currentPath);
+      fetchFolders();
+    }
+  }, [showUploadModal]);
 
   useEffect(() => {
     if (selectedItem && isTextFile(selectedItem.name) && selectedItem.download_url) {
@@ -88,6 +98,19 @@ export default function App() {
       setConfig(data);
     } catch (err) {
       console.error("Error fetching config", err);
+    }
+  };
+
+  const fetchFolders = async () => {
+    setLoadingFolders(true);
+    try {
+      const res = await fetch('/api/folders');
+      const data = await res.json();
+      setFolders(data);
+    } catch (err) {
+      console.error("Error fetching folders", err);
+    } finally {
+      setLoadingFolders(false);
     }
   };
 
@@ -166,7 +189,7 @@ export default function App() {
       reader.readAsDataURL(uploadFile);
       reader.onload = async () => {
         const base64Content = (reader.result as string).split(',')[1];
-        const path = currentPath ? `${currentPath}/${sanitizedName}` : sanitizedName;
+        const path = targetUploadPath ? `${targetUploadPath}/${sanitizedName}` : sanitizedName;
         
         const res = await fetch('/api/upload', {
           method: 'POST',
@@ -577,10 +600,23 @@ export default function App() {
                 {showUploadModal && (
                   <>
                     <div className="p-3 bg-indigo-500/5 border border-indigo-500/10 rounded-2xl mb-4">
-                      <p className="text-[10px] font-bold text-indigo-400 uppercase tracking-widest mb-1">Destino</p>
-                      <p className="text-xs font-medium text-zinc-300 truncate">
-                        root / {currentPath || 'vazio'}
-                      </p>
+                      <p className="text-[10px] font-bold text-indigo-400 uppercase tracking-widest mb-1">Destino do Upload</p>
+                      <div className="relative">
+                        <select 
+                          value={targetUploadPath}
+                          onChange={(e) => setTargetUploadPath(e.target.value)}
+                          className="w-full bg-transparent text-xs font-medium text-zinc-300 focus:outline-none appearance-none cursor-pointer pr-8"
+                        >
+                          {folders.map(f => (
+                            <option key={f} value={f} className="bg-zinc-900 text-zinc-300">
+                              {f === '' ? 'root (/) ' : `root / ${f}`}
+                            </option>
+                          ))}
+                        </select>
+                        <div className="absolute right-0 top-1/2 -translate-y-1/2 pointer-events-none text-zinc-500">
+                          {loadingFolders ? <Loader2 size={12} className="animate-spin" /> : <ChevronRight size={12} className="rotate-90" />}
+                        </div>
+                      </div>
                     </div>
 
                     <div className="space-y-4">

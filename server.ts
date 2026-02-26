@@ -165,6 +165,36 @@ async function startServer() {
     }
   });
 
+  // List all directories recursively for folder selection
+  app.get("/api/folders", async (req, res) => {
+    if (!GITHUB_TOKEN || !GITHUB_REPO) {
+      return res.status(400).json({ error: "GitHub configuration missing" });
+    }
+
+    try {
+      // Use the recursive tree API to get all items
+      const url = `https://api.github.com/repos/${GITHUB_REPO}/git/trees/${GITHUB_BRANCH}?recursive=1`;
+      const response = await fetch(url, { headers: githubHeaders });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.message || "Failed to fetch tree");
+      }
+
+      const data = await response.json();
+      // Filter only for trees (directories)
+      const folders = data.tree
+        .filter((item: any) => item.type === 'tree')
+        .map((item: any) => item.path);
+      
+      // Add root
+      res.json(['', ...folders]);
+    } catch (error: any) {
+      console.error("Error fetching folders:", error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
   // Rename/Move file or folder
   // Note: For folders, this is complex as GitHub API doesn't support folder move directly.
   // This implementation handles single file move.
