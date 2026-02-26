@@ -1,0 +1,5 @@
+{
+  "name": "RPG Asset Manager",
+  "description": "Gerenciador de assets para RPG integrado ao GitHub com suporte a pastas, renomeação e links para Notion.",
+  "requestFramePermissions": []
+}
