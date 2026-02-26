@@ -43,7 +43,7 @@ async function startServer() {
 
   // Proxy /functions to support Cloudflare Pages structure in preview
   app.all("/functions", async (req, res) => {
-    const { onRequest } = await import('./functions/index.js');
+    const { onRequest } = await import('./functions/[[path]].js');
     
     // Mock Cloudflare context
     const context = {

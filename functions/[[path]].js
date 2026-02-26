@@ -1,7 +1,8 @@
 export async function onRequest(context) {
   const { request, env } = context;
   const url = new URL(request.url);
-  const action = url.searchParams.get('action');
+  // Default action to 'contents' if not specified
+  const action = url.searchParams.get('action') || 'contents';
   const method = request.method;
 
   // GitHub Config from Environment
