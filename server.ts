@@ -41,7 +41,34 @@ async function startServer() {
     'User-Agent': 'RPG-Asset-Manager'
   };
 
-  // API Routes
+  // Proxy /functions to support Cloudflare Pages structure in preview
+  app.all("/functions", async (req, res) => {
+    const { onRequest } = await import('./functions/index.js');
+    
+    // Mock Cloudflare context
+    const context = {
+      request: {
+        url: `http://localhost:3000${req.url}`,
+        method: req.method,
+        json: () => Promise.resolve(req.body),
+      },
+      env: {
+        GITHUB_TOKEN: process.env.GITHUB_TOKEN,
+        GITHUB_REPO: process.env.GITHUB_REPO,
+        GITHUB_BRANCH: process.env.GITHUB_BRANCH,
+      }
+    };
+
+    try {
+      const response = await onRequest(context);
+      const data = await response.json();
+      res.status(response.status).json(data);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // API Routes (Legacy support for preview if needed)
   app.get("/api/config", (req, res) => {
     res.json({
       hasToken: !!GITHUB_TOKEN,
